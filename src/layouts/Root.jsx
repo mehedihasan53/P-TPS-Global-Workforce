@@ -14,7 +14,6 @@ const Root = () => {
       {/* Main Content */}
       <main className="flex-1 w-full ">
         {" "}
-        {/* Add pt-20 (padding-top) to ensure content is not overlapped */}
         <Outlet />
       </main>
 

@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  createUserWithEmailAndPassword,
+  updateProfile,
+  signInWithPopup,
+} from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
+import { auth, db, googleProvider } from "../firebase/config";
 
 const SignUp = () => {
   const [formData, setFormData] = useState({
@@ -12,21 +19,137 @@ const SignUp = () => {
     agreeToTerms: false,
   });
 
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     setFormData({
       ...formData,
       [name]: type === "checkbox" ? checked : value,
     });
+    // Clear error when user starts typing
+    if (error) setError("");
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    // Handle sign up logic here
-    console.log("Sign up data:", formData);
-    alert(
-      "Account created successfully! Please check your email for verification."
-    );
+    setLoading(true);
+    setError("");
+
+    // Validation
+    if (formData.password !== formData.confirmPassword) {
+      setError("Passwords do not match");
+      setLoading(false);
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      setError("Password should be at least 6 characters");
+      setLoading(false);
+      return;
+    }
+
+    if (!formData.agreeToTerms) {
+      setError("Please agree to the terms and conditions");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      // Create user with email and password
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        formData.email,
+        formData.password
+      );
+
+      const user = userCredential.user;
+
+      // Update user profile with display name
+      await updateProfile(user, {
+        displayName: formData.fullName,
+      });
+
+      // Save additional user data to Firestore
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        fullName: formData.fullName,
+        email: formData.email,
+        phone: formData.phone,
+        userType: formData.userType,
+        createdAt: new Date(),
+        isEmailVerified: false,
+      });
+
+      // Show success message
+      alert("Account created successfully! Please verify your email.");
+
+      // Redirect to home page or dashboard
+      navigate("/");
+    } catch (error) {
+      console.error("Error signing up:", error);
+
+      // Handle specific error messages
+      switch (error.code) {
+        case "auth/email-already-in-use":
+          setError(
+            "This email is already registered. Please use a different email or sign in."
+          );
+          break;
+        case "auth/invalid-email":
+          setError("Invalid email address format.");
+          break;
+        case "auth/weak-password":
+          setError("Password is too weak. Please use a stronger password.");
+          break;
+        case "auth/network-request-failed":
+          setError("Network error. Please check your internet connection.");
+          break;
+        default:
+          setError("Failed to create account. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignUp = async () => {
+    try {
+      setLoading(true);
+      setError("");
+
+      const result = await signInWithPopup(auth, googleProvider);
+
+      const user = result.user;
+
+      // Save user data to Firestore
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        fullName: user.displayName,
+        email: user.email,
+        phone: "", // Google sign-in doesn't provide phone number
+        userType: "job-seeker", // Default user type
+        createdAt: new Date(),
+        isEmailVerified: user.emailVerified,
+        photoURL: user.photoURL,
+        provider: "google",
+      });
+
+      alert("Signed up successfully with Google!");
+      navigate("/");
+    } catch (error) {
+      console.error("Error with Google sign up:", error);
+
+      if (error.code === "auth/popup-closed-by-user") {
+        setError("Google sign in was cancelled.");
+      } else {
+        setError("Failed to sign up with Google. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -56,6 +179,26 @@ const SignUp = () => {
               Join TPS 360 for overseas employment opportunities
             </p>
           </div>
+
+          {/* Error Message */}
+          {error && (
+            <div className="alert alert-error mb-6">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="stroke-current shrink-0 h-6 w-6"
+                fill="none"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="2"
+                  d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+              <span>{error}</span>
+            </div>
+          )}
 
           {/* Sign Up Form */}
           <form onSubmit={handleSubmit} className="space-y-6">
@@ -110,8 +253,9 @@ const SignUp = () => {
                     ? "Enter company name"
                     : "Enter your full name"
                 }
-                className="input input-bordered w-full py-3 px-4 rounded-md border-gray-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                className="input input-bordered w-full"
                 required
+                disabled={loading}
               />
             </div>
 
@@ -124,8 +268,9 @@ const SignUp = () => {
                 value={formData.email}
                 onChange={handleChange}
                 placeholder="your.email@example.com"
-                className="input input-bordered w-full py-3 px-4 rounded-md border-gray-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                className="input input-bordered w-full"
                 required
+                disabled={loading}
               />
             </div>
 
@@ -138,8 +283,9 @@ const SignUp = () => {
                 value={formData.phone}
                 onChange={handleChange}
                 placeholder="+880 1XXX-XXXXXX"
-                className="input input-bordered w-full py-3 px-4 rounded-md border-gray-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                className="input input-bordered w-full"
                 required
+                disabled={loading}
               />
             </div>
 
@@ -151,9 +297,10 @@ const SignUp = () => {
                 name="password"
                 value={formData.password}
                 onChange={handleChange}
-                placeholder="Create a strong password"
-                className="input input-bordered w-full py-3 px-4 rounded-md border-gray-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                placeholder="Create a strong password (min. 6 characters)"
+                className="input input-bordered w-full"
                 required
+                disabled={loading}
               />
             </div>
 
@@ -166,22 +313,24 @@ const SignUp = () => {
                 value={formData.confirmPassword}
                 onChange={handleChange}
                 placeholder="Confirm your password"
-                className="input input-bordered w-full py-3 px-4 rounded-md border-gray-300 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                className="input input-bordered w-full"
                 required
+                disabled={loading}
               />
             </div>
 
             {/* Terms and Conditions */}
-            <div className="form-control flex items-center">
+            <div className="form-control flex items-start space-x-3">
               <input
                 type="checkbox"
                 name="agreeToTerms"
                 checked={formData.agreeToTerms}
                 onChange={handleChange}
-                className="checkbox checkbox-primary mr-3"
+                className="checkbox checkbox-primary mt-1"
                 required
+                disabled={loading}
               />
-              <span className="label-text">
+              <span className="label-text text-sm">
                 I agree to the{" "}
                 <a href="#" className="text-primary hover:underline">
                   Terms of Service
@@ -197,28 +346,66 @@ const SignUp = () => {
             <div className="form-control mt-6">
               <button
                 type="submit"
-                className="btn btn-primary w-full py-3 rounded-md shadow-lg"
+                className="btn btn-primary w-full"
+                disabled={loading}
               >
-                Create Account
+                {loading ? (
+                  <>
+                    <span className="loading loading-spinner"></span>
+                    Creating Account...
+                  </>
+                ) : (
+                  "Create Account"
+                )}
               </button>
             </div>
-
-            {/* Divider */}
-            <div className="divider">OR</div>
-
-            {/* Login Link */}
-            <div className="text-center">
-              <p className="text-gray-600">
-                Already have an account?{" "}
-                <Link
-                  to="/signin"
-                  className="text-primary font-semibold hover:underline"
-                >
-                  Sign In
-                </Link>
-              </p>
-            </div>
           </form>
+
+          {/* Divider */}
+          <div className="divider">OR</div>
+
+          {/* Google Sign Up Button */}
+          <div className="form-control">
+            <button
+              type="button"
+              onClick={handleGoogleSignUp}
+              className="btn btn-outline w-full flex items-center justify-center space-x-2"
+              disabled={loading}
+            >
+              <svg className="w-5 h-5" viewBox="0 0 24 24">
+                <path
+                  fill="#4285F4"
+                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                />
+                <path
+                  fill="#34A853"
+                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                />
+                <path
+                  fill="#FBBC05"
+                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+                />
+                <path
+                  fill="#EA4335"
+                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                />
+              </svg>
+              <span>Sign up with Google</span>
+            </button>
+          </div>
+
+          {/* Login Link */}
+          <div className="text-center mt-6">
+            <p className="text-gray-600">
+              Already have an account?{" "}
+              <Link
+                to="/signin"
+                className="text-primary font-semibold hover:underline"
+              >
+                Sign In
+              </Link>
+            </p>
+          </div>
 
           {/* Trust Badges */}
           <div className="text-center mt-8">
